@@ -45,7 +45,7 @@ def diarize(
         device = _pick_device()
 
     pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", use_auth_token=token
+        "pyannote/speaker-diarization-3.1", token=token
     )
 
     try:
