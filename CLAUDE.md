@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `transcrtribe` is a local, offline-first CLI that transcribes any audio/video
 file with Whisper AI, identifies speakers, and exports an editable
 conversation-style transcript. It ships as a pip-installable Python package
-plus a set of macOS double-click installers/launchers (no separate "app"
-codebase — the `.command` files just shell out to the installed CLI).
+plus double-click installers/launchers for both macOS and Windows (no
+separate "app" codebase — the `.command`/`.bat`/`.ps1` files just shell out
+to the installed CLI).
 
 ## Commands
 
@@ -91,30 +92,65 @@ Multiple input files are processed independently in a loop; one file's
 failure doesn't stop the rest (see `main()`'s per-file try/except and
 non-zero exit code accumulation).
 
-### macOS distribution layer
+### Distribution layer (macOS + Windows)
 
+Both platforms follow the same three-file pattern: a real installer script,
+a double-click wrapper for it, and a double-click "pick a file and
+transcribe" launcher. Neither platform's installer touches the system
+Python or global site-packages — each creates its own isolated venv.
+
+**macOS:**
 - `install_macos.sh` — idempotent installer: installs Homebrew/Python/ffmpeg
-  if absent, creates an isolated venv at `~/.transcrtribe/venv`, pip-installs
-  the package into it, and writes a thin wrapper script to
+  if absent, creates a venv at `~/.transcrtribe/venv`, pip-installs the
+  package into it, and writes a thin wrapper script to
   `~/.local/bin/transcrtribe` (added to PATH via `.zshrc`/`.bash_profile`).
-  It never touches the caller's system Python or global site-packages.
 - `Install Transcrtribe.command` — double-clickable Finder entry point that
-  just `cd`s to the repo and runs `install_macos.sh`.
-- `Transcribe Audio.command` — double-clickable, no-terminal-required flow:
-  native `osascript` file picker → runs the installed
-  `~/.local/bin/transcrtribe` → writes output to
+  `cd`s to the repo and runs `install_macos.sh`.
+- `Transcribe Audio.command` — no-terminal-required flow: native `osascript`
+  file picker → runs `~/.local/bin/transcrtribe` → writes output to
   `~/Desktop/Transcrtribe Output` → reveals it in Finder.
 
+**Windows:**
+- `install_windows.ps1` — installs Python/ffmpeg via `winget` if absent
+  (falling back to a manual-install message pointing at python.org if
+  `winget` itself is missing), creates a venv at
+  `%USERPROFILE%\.transcrtribe\venv`, pip-installs the package, and writes
+  `%USERPROFILE%\.transcrtribe\bin\transcrtribe.bat` (a thin wrapper around
+  the venv's `Scripts\transcrtribe.exe`). That `bin` folder is appended
+  (never overwritten) to the user's `Path` via
+  `[Environment]::SetEnvironmentVariable(..., "User")`.
+- `Install Transcrtribe.bat` — double-clickable Explorer entry point. It
+  invokes `install_windows.ps1` via
+  `powershell -ExecutionPolicy Bypass -File ...` — a **scoped**, one-time
+  bypass, not a system-wide policy change — so it works even on machines
+  where PowerShell's default `Restricted` execution policy would otherwise
+  block the `.ps1` from running at all.
+- `Transcribe Audio.bat` → `transcribe_audio_windows.ps1` — same
+  no-terminal flow as macOS, using `System.Windows.Forms.OpenFileDialog`
+  for the file picker and writing to `Desktop\Transcrtribe Output`.
+
+`.bat`/`.ps1` files are committed with CRLF line endings and `.command`/`.sh`
+with LF, enforced via `.gitattributes` — don't let an editor or `git config
+core.autocrlf` silently flip these; mixed line endings can break `cmd.exe`'s
+batch parser in subtle ways.
+
 If you change the CLI's argument surface (flags, defaults, output
-directory conventions), update `Transcribe Audio.command`'s invocation and
-the README's flag table together — they're not derived from `cli.py`
-automatically.
+directory conventions), update **both** `Transcribe Audio.command` and
+`transcribe_audio_windows.ps1`'s invocation, plus the README's flag table —
+none of these are derived from `cli.py` automatically.
 
-## Known environment constraint
+## Known environment constraints
 
-Model downloads (Whisper weights via `faster-whisper`, pyannote pipelines)
-require reaching `huggingface.co`. Some sandboxed dev environments block
-this host at the network policy level — that shows up as `403 Forbidden`
-during `transcribe()`/`diarize()`, not a code bug. Prefer testing
-`conversation.py`/`exporter.py` directly with synthetic data when working in
-such an environment.
+- Model downloads (Whisper weights via `faster-whisper`, pyannote
+  pipelines) require reaching `huggingface.co`. Some sandboxed dev
+  environments (and corporate networks/VPNs on end-user machines) block
+  this host at the network policy level — that shows up as
+  `403 Forbidden` during `transcribe()`/`diarize()`, not a code bug. Prefer
+  testing `conversation.py`/`exporter.py` directly with synthetic data when
+  working in such an environment; there's no way to exercise the real
+  model-download path without outbound access to Hugging Face.
+- `install_windows.ps1` and `transcribe_audio_windows.ps1` can't be syntax
+  validated with `pwsh`/`powershell` in a Linux sandbox (no PowerShell
+  runtime available there) — review changes to them carefully by hand, and
+  actually double-click-test on a real Windows machine before trusting a
+  change to this layer.
