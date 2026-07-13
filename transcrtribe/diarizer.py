@@ -59,7 +59,8 @@ def diarize(
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
 
-    diarization = pipeline(audio_path, **kwargs)
+    output = pipeline(audio_path, **kwargs)
+    diarization = getattr(output, "speaker_diarization", output)
 
     turns: list[SpeakerTurn] = []
     for segment, _, label in diarization.itertracks(yield_label=True):
