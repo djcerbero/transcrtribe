@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transcrtribe"
+version = "1.0.0"
+description = "Local speech-to-text with speaker diarization, exporting to TXT, RTF, DOCX and PDF."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "pyannote.audio>=3.1.0",
+    "torch>=2.0.0",
+    "reportlab>=4.0.0",
+    "python-docx>=1.1.0",
+    "rich>=13.0.0",
+    "av>=11.0.0",
+]
+
+[project.scripts]
+transcrtribe = "transcrtribe.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["transcrtribe*"]
