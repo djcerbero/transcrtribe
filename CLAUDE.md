@@ -1,0 +1,110 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+`transcrtribe` is a local, offline-first CLI that transcribes any audio/video
+file with Whisper AI, identifies speakers, and exports an editable
+conversation-style transcript. It ships as a pip-installable Python package
+plus a set of macOS double-click installers/launchers (no separate "app"
+codebase — the `.command` files just shell out to the installed CLI).
+
+## Commands
+
+```bash
+# Install in editable mode for development
+pip install -e .
+
+# Run the CLI
+transcrtribe <audio_or_video_file> [options]
+python -m transcrtribe.cli <file>   # equivalent, without installing the entry point
+
+# Key flags
+transcrtribe file.mp3 -o out_dir -f txt,rtf,docx,pdf -m small --speakers 2 --no-diarization --device auto
+```
+
+There is no test suite, linter, or CI config in this repo yet. There is no
+build step beyond standard `pip`/`setuptools` packaging (`pyproject.toml`,
+setuptools backend, single package `transcrtribe`).
+
+When verifying changes manually, the pipeline can be exercised in stages
+without needing real speech audio or a Hugging Face token:
+- `transcriber.transcribe()` requires downloading a Whisper model from
+  Hugging Face on first run (network-gated — blocked in some sandboxes).
+- `diarizer.diarize()` requires an `HF_TOKEN`/`HUGGINGFACE_TOKEN` env var and
+  accepted model terms for `pyannote/speaker-diarization-3.1`; without it,
+  it raises `DiarizationUnavailable` by design (see Architecture below).
+- `conversation.build_conversation()` and `exporter.export()` have no
+  external dependencies and can be smoke-tested directly with synthetic
+  `Segment`/`ConversationTurn` objects.
+
+## Architecture
+
+The pipeline is a straight-line sequence of four independent stages, each in
+its own module under `transcrtribe/`, orchestrated by `cli.py`:
+
+1. **`transcriber.py`** — wraps `faster_whisper.WhisperModel`. Produces a
+   list of `Segment` (sentence-level, with word-level `Word` timestamps) and
+   the detected language. Device selection (`cpu`/`cuda`) auto-detects via
+   `_pick_device()`.
+
+2. **`diarizer.py`** — wraps `pyannote.audio`'s pretrained pipeline
+   (`pyannote/speaker-diarization-3.1`) to produce `SpeakerTurn` objects
+   (start/end/speaker label). This is the one stage allowed to fail
+   loudly-but-safely: it raises `DiarizationUnavailable` (not a crash) when
+   there's no HF token or pyannote can't load, and `cli.py` catches that
+   specifically to fall back to labeling everything `"Speaker 1"`. Don't
+   change this to a bare `except Exception` in the CLI — the intent is that
+   *only* the expected/documented failure mode degrades gracefully; other
+   exceptions from this stage should still surface.
+   `assign_speakers(segments, turns)` then mutates `Segment.speaker` in
+   place by picking the diarization turn with maximum time overlap per
+   segment (falling back to nearest-turn-by-midpoint if no overlap exists).
+
+3. **`conversation.py`** — `build_conversation()` collapses consecutive
+   same-speaker `Segment`s into merged `ConversationTurn`s (this is what
+   makes the output read like a script rather than a flat segment dump).
+   `format_timestamp()` is the single source of truth for `MM:SS`/`H:MM:SS`
+   formatting, shared by every exporter.
+
+4. **`exporter.py`** — takes `ConversationTurn`s and writes TXT, RTF, DOCX,
+   and/or PDF, all from the same data with no format-specific business
+   logic elsewhere. Each format is a private `_export_<fmt>()` function;
+   `SUPPORTED_FORMATS` is the single list gating both CLI `--formats`
+   validation and dispatch in `export()` — keep them in sync if adding a
+   format.
+
+`cli.py` ties it together per input file: transcribe → (try diarize, catch
+`DiarizationUnavailable`) → assign speakers → build conversation → export.
+Multiple input files are processed independently in a loop; one file's
+failure doesn't stop the rest (see `main()`'s per-file try/except and
+non-zero exit code accumulation).
+
+### macOS distribution layer
+
+- `install_macos.sh` — idempotent installer: installs Homebrew/Python/ffmpeg
+  if absent, creates an isolated venv at `~/.transcrtribe/venv`, pip-installs
+  the package into it, and writes a thin wrapper script to
+  `~/.local/bin/transcrtribe` (added to PATH via `.zshrc`/`.bash_profile`).
+  It never touches the caller's system Python or global site-packages.
+- `Install Transcrtribe.command` — double-clickable Finder entry point that
+  just `cd`s to the repo and runs `install_macos.sh`.
+- `Transcribe Audio.command` — double-clickable, no-terminal-required flow:
+  native `osascript` file picker → runs the installed
+  `~/.local/bin/transcrtribe` → writes output to
+  `~/Desktop/Transcrtribe Output` → reveals it in Finder.
+
+If you change the CLI's argument surface (flags, defaults, output
+directory conventions), update `Transcribe Audio.command`'s invocation and
+the README's flag table together — they're not derived from `cli.py`
+automatically.
+
+## Known environment constraint
+
+Model downloads (Whisper weights via `faster-whisper`, pyannote pipelines)
+require reaching `huggingface.co`. Some sandboxed dev environments block
+this host at the network policy level — that shows up as `403 Forbidden`
+during `transcribe()`/`diarize()`, not a code bug. Prefer testing
+`conversation.py`/`exporter.py` directly with synthetic data when working in
+such an environment.
