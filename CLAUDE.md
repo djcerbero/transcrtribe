@@ -41,17 +41,26 @@ without needing real speech audio or a Hugging Face token:
 
 ## Architecture
 
-The pipeline is a straight-line sequence of four independent stages, each in
+The pipeline is a straight-line sequence of five independent stages, each in
 its own module under `transcrtribe/`, orchestrated by `cli.py`:
 
-1. **`transcriber.py`** — wraps `faster_whisper.WhisperModel`. Produces a
+1. **`audio_prep.py`** — runs the input file through `ffmpeg`'s EBU R128
+   `loudnorm` filter (speech preset, single-pass) before transcription/
+   diarization, writing a normalized mono 16kHz temp WAV. This is the other
+   stage allowed to fail loudly-but-safely: it raises
+   `NormalizationUnavailable` (not a crash) if `ffmpeg` is missing or the
+   conversion fails, and `cli.py` catches that specifically to fall back to
+   the original, un-normalized file. Always on — no CLI flag to disable it.
+   `cli.py` owns deleting the temp file once processing finishes.
+
+2. **`transcriber.py`** — wraps `faster_whisper.WhisperModel`. Produces a
    list of `Segment` (sentence-level, with word-level `Word` timestamps) and
    the detected language. Device selection (`cpu`/`cuda`) auto-detects via
    `_pick_device()`.
 
-2. **`diarizer.py`** — wraps `pyannote.audio`'s pretrained pipeline
+3. **`diarizer.py`** — wraps `pyannote.audio`'s pretrained pipeline
    (`pyannote/speaker-diarization-3.1`) to produce `SpeakerTurn` objects
-   (start/end/speaker label). This is the one stage allowed to fail
+   (start/end/speaker label). This is another stage allowed to fail
    loudly-but-safely: it raises `DiarizationUnavailable` (not a crash) when
    there's no HF token or pyannote can't load, and `cli.py` catches that
    specifically to fall back to labeling everything `"Speaker 1"`. Don't
@@ -62,20 +71,21 @@ its own module under `transcrtribe/`, orchestrated by `cli.py`:
    place by picking the diarization turn with maximum time overlap per
    segment (falling back to nearest-turn-by-midpoint if no overlap exists).
 
-3. **`conversation.py`** — `build_conversation()` collapses consecutive
+4. **`conversation.py`** — `build_conversation()` collapses consecutive
    same-speaker `Segment`s into merged `ConversationTurn`s (this is what
    makes the output read like a script rather than a flat segment dump).
    `format_timestamp()` is the single source of truth for `MM:SS`/`H:MM:SS`
    formatting, shared by every exporter.
 
-4. **`exporter.py`** — takes `ConversationTurn`s and writes TXT, RTF, DOCX,
+5. **`exporter.py`** — takes `ConversationTurn`s and writes TXT, RTF, DOCX,
    and/or PDF, all from the same data with no format-specific business
    logic elsewhere. Each format is a private `_export_<fmt>()` function;
    `SUPPORTED_FORMATS` is the single list gating both CLI `--formats`
    validation and dispatch in `export()` — keep them in sync if adding a
    format.
 
-`cli.py` ties it together per input file: transcribe → (try diarize, catch
+`cli.py` ties it together per input file: normalize audio (fall back to
+original on failure) → transcribe → (try diarize, catch
 `DiarizationUnavailable`) → assign speakers → build conversation → export.
 Multiple input files are processed independently in a loop; one file's
 failure doesn't stop the rest (see `main()`'s per-file try/except and

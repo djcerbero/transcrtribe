@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
+from .audio_prep import NormalizationUnavailable, normalize_audio
 from .conversation import build_conversation, format_timestamp
 from .diarizer import DiarizationUnavailable, assign_speakers, diarize
 from .exporter import SUPPORTED_FORMATS, export
@@ -58,51 +59,70 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _normalize_step(audio_path: Path) -> Path | None:
+    try:
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+            task = progress.add_task("Normalizing audio...", total=None)
+            normalized_path = normalize_audio(str(audio_path))
+            progress.update(task, description="Normalized audio")
+        return normalized_path
+    except NormalizationUnavailable as exc:
+        console.print(f"[yellow]Loudness normalization skipped:[/yellow] {exc}")
+        return None
+
+
 def process_file(audio_path: Path, args: argparse.Namespace) -> None:
     console.rule(f"[bold cyan]{audio_path.name}")
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-        task = progress.add_task("Transcribing with Whisper AI...", total=None)
-        segments, language = transcribe(
-            str(audio_path), model_size=args.model, language=args.language, device=args.device
-        )
-        progress.update(task, description=f"Transcribed ({language}) — {len(segments)} segments")
+    normalized_path = _normalize_step(audio_path)
+    work_path = str(normalized_path) if normalized_path is not None else str(audio_path)
 
-    turns_source = segments
-    if not args.no_diarization:
-        try:
-            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-                task = progress.add_task("Identifying speakers...", total=None)
-                speaker_turns = diarize(
-                    str(audio_path), hf_token=args.hf_token, num_speakers=args.speakers, device=args.device
-                )
-                assign_speakers(segments, speaker_turns)
-                progress.update(task, description=f"Identified {len({t.speaker for t in speaker_turns})} speaker(s)")
-        except DiarizationUnavailable as exc:
-            console.print(f"[yellow]Speaker recognition skipped:[/yellow] {exc}")
+    try:
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+            task = progress.add_task("Transcribing with Whisper AI...", total=None)
+            segments, language = transcribe(
+                work_path, model_size=args.model, language=args.language, device=args.device
+            )
+            progress.update(task, description=f"Transcribed ({language}) — {len(segments)} segments")
+
+        turns_source = segments
+        if not args.no_diarization:
+            try:
+                with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+                    task = progress.add_task("Identifying speakers...", total=None)
+                    speaker_turns = diarize(
+                        work_path, hf_token=args.hf_token, num_speakers=args.speakers, device=args.device
+                    )
+                    assign_speakers(segments, speaker_turns)
+                    progress.update(task, description=f"Identified {len({t.speaker for t in speaker_turns})} speaker(s)")
+            except DiarizationUnavailable as exc:
+                console.print(f"[yellow]Speaker recognition skipped:[/yellow] {exc}")
+                for seg in segments:
+                    seg.speaker = "Speaker 1"
+        else:
             for seg in segments:
                 seg.speaker = "Speaker 1"
-    else:
-        for seg in segments:
-            seg.speaker = "Speaker 1"
 
-    conversation = build_conversation(turns_source)
+        conversation = build_conversation(turns_source)
 
-    console.print()
-    for turn in conversation[:5]:
-        console.print(f"[bold]{format_timestamp(turn.start)} {turn.speaker}:[/bold] {turn.text}")
-    if len(conversation) > 5:
-        console.print(f"[dim]... {len(conversation) - 5} more turn(s) ...[/dim]")
-    console.print()
+        console.print()
+        for turn in conversation[:5]:
+            console.print(f"[bold]{format_timestamp(turn.start)} {turn.speaker}:[/bold] {turn.text}")
+        if len(conversation) > 5:
+            console.print(f"[dim]... {len(conversation) - 5} more turn(s) ...[/dim]")
+        console.print()
 
-    output_dir = Path(args.output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_base = output_dir / audio_path.stem
-    formats = [f.strip().lower() for f in args.formats.split(",") if f.strip()]
+        output_dir = Path(args.output_dir).expanduser().resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_base = output_dir / audio_path.stem
+        formats = [f.strip().lower() for f in args.formats.split(",") if f.strip()]
 
-    written = export(conversation, output_base, formats, title=audio_path.stem)
-    for path in written:
-        console.print(f"[green]Wrote[/green] {path}")
+        written = export(conversation, output_base, formats, title=audio_path.stem)
+        for path in written:
+            console.print(f"[green]Wrote[/green] {path}")
+    finally:
+        if normalized_path is not None:
+            normalized_path.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:

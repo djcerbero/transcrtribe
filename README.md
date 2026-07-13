@@ -4,7 +4,9 @@ Local, private speech-to-text for macOS. Drop in any audio or video file and
 get back an editable, speaker-labeled transcript — like a script of the
 conversation — in TXT, RTF, DOCX and/or PDF. Powered by OpenAI's Whisper
 model (via `faster-whisper`) running entirely on your machine, plus
-`pyannote.audio` for "who said what" speaker recognition.
+`pyannote.audio` for "who said what" speaker recognition. Audio is
+automatically loudness-normalized before processing to improve accuracy on
+quiet or unevenly-recorded files.
 
 ## Install (macOS)
 
