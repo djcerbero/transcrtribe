@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip speaker recognition and produce a plain transcript.",
     )
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
+    parser.add_argument(
+        "--compute-type", default="default",
+        help="faster-whisper compute type: default, int8, int8_float16, float16, float32. "
+        "Use int8 on CPU to silence the float16-unsupported warning and speed up inference.",
+    )
     parser.add_argument("--version", action="version", version=f"transcrtribe {__version__}")
     return parser
 
@@ -81,7 +86,8 @@ def process_file(audio_path: Path, args: argparse.Namespace) -> None:
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
             task = progress.add_task("Transcribing with Whisper AI...", total=None)
             segments, language = transcribe(
-                work_path, model_size=args.model, language=args.language, device=args.device
+                work_path, model_size=args.model, language=args.language, device=args.device,
+                compute_type=args.compute_type,
             )
             progress.update(task, description=f"Transcribed ({language}) — {len(segments)} segments")
 

@@ -82,6 +82,7 @@ transcrtribe --help
 | `--hf-token` | Pass a Hugging Face token directly instead of via `HF_TOKEN` |
 | `--no-diarization` | Skip speaker recognition entirely |
 | `--device` | `auto`, `cpu`, `cuda`, or `mps` (Apple Silicon GPU) |
+| `--compute-type` | faster-whisper compute type: `default`, `int8`, `int8_float16`, `float16`, `float32`. Use `int8` on CPU for faster inference and to silence the float16-unsupported warning |
 
 ## Uninstall
 
