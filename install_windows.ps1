@@ -19,15 +19,40 @@ $AppDir  = Join-Path $env:USERPROFILE ".transcrtribe"
 $VenvDir = Join-Path $AppDir "venv"
 $BinDir  = Join-Path $AppDir "bin"
 
-# 1. Locate (or install) Python 3.9+
+# 1. Locate (or install) a Python version torch actually ships wheels for.
+#
+# We deliberately do NOT just grab whatever unversioned `python`/`python3`
+# is first on PATH: if that happens to be a brand-new Python release,
+# torch/ctranslate2 may not have published wheels for it yet, which makes
+# `pip install` fail with "No matching distribution found for torch" (a
+# real failure users hit, not a config problem on their end — the same
+# issue bit the macOS installer when the system's default python3 had
+# moved past what the ML wheel ecosystem supports). So we only accept
+# Python 3.9-3.12 here, and otherwise install 3.12 side-by-side via winget
+# and invoke it explicitly through the `py` launcher, which finds a
+# specific version by number regardless of PATH order.
+function Test-PythonVersionOk($verOut) {
+    return ($verOut -match "Python 3\.(\d+)" -and [int]$Matches[1] -ge 9 -and [int]$Matches[1] -le 12)
+}
+
 function Find-Python {
+    # Prefer the py launcher pinned to 3.12 if it's already present.
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    if ($py) {
+        try {
+            $verOut = & py -3.12 --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $verOut -match "Python 3\.12") {
+                return @("py", "-3.12")
+            }
+        } catch {}
+    }
     foreach ($cmd in @("python", "python3")) {
         $found = Get-Command $cmd -ErrorAction SilentlyContinue
         if ($found) {
             try {
                 $verOut = & $cmd --version 2>&1
-                if ($verOut -match "Python 3\.(\d+)" -and [int]$Matches[1] -ge 9) {
-                    return $cmd
+                if (Test-PythonVersionOk $verOut) {
+                    return @($cmd)
                 }
             } catch {}
         }
@@ -38,10 +63,10 @@ function Find-Python {
 $PythonCmd = Find-Python
 
 if (-not $PythonCmd) {
-    Info "Python 3 not found."
+    Info "No compatible Python (3.9-3.12) found."
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
-        Info "Installing Python via winget..."
+        Info "Installing Python 3.12 via winget..."
         winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
         # Refresh PATH for the current process so the new install is visible immediately.
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
@@ -49,14 +74,17 @@ if (-not $PythonCmd) {
     }
     if (-not $PythonCmd) {
         Write-Host ""
-        Write-Host "Could not find or install Python automatically." -ForegroundColor Red
-        Write-Host "Please install Python 3.9+ from https://www.python.org/downloads/windows/" -ForegroundColor Red
+        Write-Host "Could not find or install a compatible Python automatically." -ForegroundColor Red
+        Write-Host "Please install Python 3.12 from https://www.python.org/downloads/windows/" -ForegroundColor Red
         Write-Host "  IMPORTANT: check 'Add python.exe to PATH' during setup." -ForegroundColor Red
         Write-Host "Then re-run this installer." -ForegroundColor Red
         exit 1
     }
 }
-Info "Using Python: $PythonCmd ($(& $PythonCmd --version))"
+$PythonExe = $PythonCmd[0]
+$PythonExtraArgs = @()
+if ($PythonCmd.Length -gt 1) { $PythonExtraArgs = $PythonCmd[1..($PythonCmd.Length-1)] }
+Info "Using Python: $($PythonCmd -join ' ') ($(& $PythonExe @PythonExtraArgs --version))"
 
 # 2. ffmpeg (broadens audio/video format support beyond the bundled decoder)
 $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
@@ -79,7 +107,7 @@ if (-not $ffmpeg) {
 # 3. Virtual environment
 Info "Creating isolated environment at $VenvDir ..."
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-& $PythonCmd -m venv $VenvDir
+& $PythonExe @PythonExtraArgs -m venv $VenvDir
 
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $VenvExe    = Join-Path $VenvDir "Scripts\transcrtribe.exe"

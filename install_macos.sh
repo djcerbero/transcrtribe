@@ -36,13 +36,30 @@ else
   info "Homebrew found."
 fi
 
-# 2. python3
-if ! command -v python3 >/dev/null 2>&1; then
-  info "Installing Python 3 via Homebrew..."
-  brew install python
-else
-  info "Python 3 found: $(python3 --version)"
+# 2. Python — pinned to a version PyTorch actually ships wheels for.
+#
+# We deliberately do NOT use whatever unversioned `python3` is already on
+# PATH: on a machine where Homebrew's `python` formula (or a prior manual
+# install) has moved on to a brand-new release, `python3` can point at a
+# Python newer than anything torch/ctranslate2 have published wheels for
+# yet, which makes `pip install` fail with "No matching distribution found
+# for torch" — a real failure users hit, not a config problem on their end.
+# python@3.12 is a long-supported version with full wheel coverage across
+# the whole ML stack this app depends on, so we pin to it explicitly and
+# always use its exact binary for the venv.
+PYTHON_FORMULA="python@3.12"
+info "Ensuring $PYTHON_FORMULA is installed via Homebrew (this is what transcrtribe's venv will use, independent of your default python3)..."
+if ! brew install "$PYTHON_FORMULA"; then
+  warn "Retrying after 'brew update' (your local Homebrew formula list may be stale)..."
+  brew update
+  brew install "$PYTHON_FORMULA"
 fi
+PY_BIN="$(brew --prefix "$PYTHON_FORMULA")/bin/python3.12"
+if [[ ! -x "$PY_BIN" ]]; then
+  echo "Could not locate python3.12 after installing $PYTHON_FORMULA via Homebrew." >&2
+  exit 1
+fi
+info "Using Python: $("$PY_BIN" --version) ($PY_BIN)"
 
 # 3. ffmpeg (broadens audio/video format support beyond the bundled decoder)
 if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -55,7 +72,7 @@ fi
 # 4. Virtual environment
 info "Creating isolated environment at $VENV_DIR ..."
 mkdir -p "$APP_DIR"
-python3 -m venv "$VENV_DIR"
+"$PY_BIN" -m venv "$VENV_DIR"
 
 info "Installing transcrtribe and dependencies (this can take a few minutes)..."
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet

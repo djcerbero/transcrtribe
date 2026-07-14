@@ -161,3 +161,11 @@ transcrtribe --help
   error means something between you and Hugging Face (corporate firewall,
   VPN, or a restrictive sandbox) is blocking that host — it isn't a bug in
   the app. Retry on a normal network connection.
+- **`No matching distribution found for torch`**: PyTorch only ships wheels
+  for Python versions the whole ML ecosystem has caught up to. Both
+  installers avoid this by pinning to Python 3.12 for transcrtribe's own
+  isolated environment (macOS via `python@3.12` from Homebrew, Windows via
+  `winget`/the `py` launcher) regardless of what your system's default
+  `python3` is — so this shouldn't come up. If you hit it anyway, make sure
+  you're running the current `Install Transcrtribe.command`/`.bat`, not an
+  older copy, and re-run the installer.

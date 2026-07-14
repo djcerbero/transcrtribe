@@ -7,7 +7,7 @@ name = "transcrtribe"
 version = "1.0.0"
 description = "Local speech-to-text with speaker diarization, exporting to TXT, RTF, DOCX and PDF."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 license = { text = "MIT" }
 dependencies = [
     "faster-whisper>=1.0.0",

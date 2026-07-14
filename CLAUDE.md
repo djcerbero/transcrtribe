@@ -99,10 +99,25 @@ a double-click wrapper for it, and a double-click "pick a file and
 transcribe" launcher. Neither platform's installer touches the system
 Python or global site-packages — each creates its own isolated venv.
 
+Both installers pin the interpreter used to create transcrtribe's venv to
+**Python 3.12** rather than trusting whatever unversioned `python3`/`python`
+is already on the user's PATH. This isn't cosmetic: PyTorch (a hard
+dependency via `pyannote.audio`) only ships wheels for Python versions the
+ML wheel ecosystem has caught up to, and a system `python3` that's moved on
+to a newer release (e.g. Homebrew's rolling `python` formula, or a fresh
+Windows box) makes `pip install` fail with a confusing "No matching
+distribution found for torch" instead of a clear error. `pyproject.toml`'s
+`requires-python = ">=3.9,<3.13"` backstops this with a clear pip error for
+anyone who bypasses the installers and runs `pip install .` directly on an
+incompatible interpreter.
+
 **macOS:**
-- `install_macos.sh` — idempotent installer: installs Homebrew/Python/ffmpeg
-  if absent, creates a venv at `~/.transcrtribe/venv`, pip-installs the
-  package into it, and writes a thin wrapper script to
+- `install_macos.sh` — idempotent installer: installs Homebrew/ffmpeg if
+  absent, `brew install python@3.12` (retrying after `brew update` once if
+  the formula isn't found — stale Homebrew formula metadata is common),
+  resolves the exact `python3.12` binary via `brew --prefix python@3.12`,
+  creates a venv at `~/.transcrtribe/venv` with *that* binary specifically,
+  pip-installs the package into it, and writes a thin wrapper script to
   `~/.local/bin/transcrtribe` (added to PATH via `.zshrc`/`.bash_profile`).
 - `Install Transcrtribe.command` — double-clickable Finder entry point that
   `cd`s to the repo and runs `install_macos.sh`.
@@ -111,10 +126,16 @@ Python or global site-packages — each creates its own isolated venv.
   `~/Desktop/Transcrtribe Output` → reveals it in Finder.
 
 **Windows:**
-- `install_windows.ps1` — installs Python/ffmpeg via `winget` if absent
-  (falling back to a manual-install message pointing at python.org if
-  `winget` itself is missing), creates a venv at
-  `%USERPROFILE%\.transcrtribe\venv`, pip-installs the package, and writes
+- `install_windows.ps1` — looks for an already-installed Python in the
+  3.9-3.12 range (preferring `py -3.12` via the Python Launcher, which
+  finds a specific version by number regardless of PATH order, before
+  falling back to generic `python`/`python3` if their version qualifies).
+  If nothing qualifies, installs Python 3.12 via `winget` side-by-side with
+  whatever else is present (falling back to a manual-install message
+  pointing at python.org if `winget` itself is missing) and re-resolves via
+  the `py` launcher. Also installs ffmpeg via `winget` if absent. Creates a
+  venv at `%USERPROFILE%\.transcrtribe\venv` with the resolved interpreter,
+  pip-installs the package, and writes
   `%USERPROFILE%\.transcrtribe\bin\transcrtribe.bat` (a thin wrapper around
   the venv's `Scripts\transcrtribe.exe`). That `bin` folder is appended
   (never overwritten) to the user's `Path` via
